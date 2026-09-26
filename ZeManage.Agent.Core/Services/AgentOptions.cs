@@ -13,7 +13,7 @@ public sealed class AgentOptions
     public int HardwareIntervalSeconds { get; set; } = 60;
     public int NetworkIntervalSeconds { get; set; } = 300;
     public int ProcessScanIntervalSeconds { get; set; } = 10;
-    public int SyncIntervalSeconds { get; set; } = 60;
+    public int SyncIntervalSeconds { get; set; } = 30;
     public bool EnableSpeedTest { get; set; } = false;
 
     // Company code set in backend admin panel — required for identity registration
