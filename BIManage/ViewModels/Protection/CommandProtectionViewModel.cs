@@ -83,6 +83,12 @@ namespace BIManageRevit.BIManage.ViewModels.Protection
         private bool _canCreate = true;
         private bool _canUpdate = true;
 
+        // Ids the by-model endpoint returned on the last successful fetch (null = no
+        // successful fetch yet → show the whole local cache), plus ids saved from this
+        // dialog so a just-added row shows before the next fetch returns it.
+        private HashSet<string>? _serverCommandIds;
+        private readonly HashSet<string> _sessionCommandIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>Server's canCreate for this model — false hides Add/Import.</summary>
         public bool CanCreate
         {
@@ -170,6 +176,15 @@ namespace BIManageRevit.BIManage.ViewModels.Protection
                 var dbCommands = _repository.LoadAllCommandSettings(_projectId);
                 _logger?.LogInfo($"Loaded {dbCommands.Count} commands from database");
 
+                if (_serverCommandIds != null)
+                {
+                    dbCommands = dbCommands
+                        .Where(c => !string.IsNullOrEmpty(c.Id)
+                                    && (_serverCommandIds.Contains(c.Id!) || _sessionCommandIds.Contains(c.Id!)))
+                        .ToList();
+                    _logger?.LogInfo($"Showing {dbCommands.Count} command(s) returned by the by-model endpoint");
+                }
+
                 foreach (var cmd in dbCommands)
                 {
                     // Convert profileId → displayName using cache. The DB stores profile
@@ -247,6 +262,16 @@ namespace BIManageRevit.BIManage.ViewModels.Protection
                     var apiCommands = await _syncService.FetchByModelGuidFromApiAsync(_currentModelGuid, _profileId ?? _revitUsername);
                     _logger?.LogInfo($"Fetched {apiCommands.Count} command protections from server (model-specific)");
 
+                    // A successful answer is the list to show — local rows the endpoint didn't
+                    // return (other models/projects, stale cache) stay out of this dialog.
+                    // On failure keep the previous filter (or none) so the cache still shows offline.
+                    if (_syncService.LastFetchSucceeded)
+                    {
+                        _serverCommandIds = new HashSet<string>(
+                            apiCommands.Where(c => !string.IsNullOrEmpty(c.Id)).Select(c => c.Id!),
+                            StringComparer.OrdinalIgnoreCase);
+                    }
+
                     // No answer (offline / failed fetch) keeps the current state.
                     var permissions = _syncService.LastPermissions;
                     if (permissions != null)
@@ -315,6 +340,7 @@ namespace BIManageRevit.BIManage.ViewModels.Protection
                     if (!string.IsNullOrEmpty(newId))
                     {
                         command.Id = newId;
+                        _sessionCommandIds.Add(newId);
                         // Restore display name for UI
                         command.ModifiedBy = displayName;
                         command.CreatedBy = displayName;

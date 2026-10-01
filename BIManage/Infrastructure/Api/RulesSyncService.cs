@@ -42,6 +42,13 @@ namespace BIManage.Infrastructure.Api
         /// </summary>
         public ProtectionPermissions? LastPermissions { get; private set; }
 
+        /// <summary>
+        /// True when the last <see cref="FetchRuleProtectionsByModelAsync"/> got a parseable
+        /// answer from the server (an empty list included) — its result is then the
+        /// authoritative list to display. False on network/auth/parse failure.
+        /// </summary>
+        public bool LastFetchSucceeded { get; private set; }
+
         public RulesSyncService(
             RuleRepository ruleRepository,
             ISignalRService? signalRService = null,
@@ -608,6 +615,7 @@ namespace BIManage.Infrastructure.Api
         public async Task<List<Rule>> FetchRuleProtectionsByModelAsync(string modelGuid)
         {
             LastPermissions = null;
+            LastFetchSucceeded = false;
             try
             {
                 // Snapshot local rule count BEFORE the fetch so we can detect any drop
@@ -668,22 +676,28 @@ namespace BIManage.Infrastructure.Api
                 if (apiRules.Count == 0)
                     _logger?.LogInfo("No rule protections returned from API — running reconciliation against empty server set (deletes local orphans)");
 
-                // Tenant-scope filter: drop any API rows whose companyId doesn't match the
-                // currently signed-in user. The server SHOULD already scope by JWT claims,
-                // but a defense-in-depth filter here prevents a cross-tenant response (e.g.
-                // a model registered under a different company) from polluting this user's
-                // local cache. Rows with no companyId are kept (system defaults / pre-scope data).
+                // Tenant-scope filter (drop rows whose companyId != signed-in company) — REMOVED.
+                // With company collaboration the server legitimately returns the project owner's
+                // rules to a collaborating company (read-only, canCreate/canUpdate=false);
+                // dropping them left the dialog showing stale local rows instead. The server
+                // scopes the response by the caller's JWT, so the response is shown as-is.
+                LastFetchSucceeded = true;
                 var currentCompanyId = GetCurrentCompanyId();
-                if (currentCompanyId != null)
+
+                // Companies whose rows this response speaks for: the caller's own company plus
+                // any company the server returned rows for (e.g. the project owner). The
+                // reconciliation sweeps below are limited to these.
+                var scopeCompanyIds = new List<string?>();
+                if (currentCompanyId != null) scopeCompanyIds.Add(currentCompanyId);
+                foreach (var companyId in apiRules
+                             .Select(r => r.CompanyId)
+                             .Where(id => !string.IsNullOrWhiteSpace(id))
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    var preFilter = apiRules.Count;
-                    apiRules = apiRules
-                        .Where(r => string.IsNullOrWhiteSpace(r.CompanyId)
-                                    || string.Equals(r.CompanyId, currentCompanyId, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                    if (apiRules.Count != preFilter)
-                        _logger?.LogInfo($"Tenant filter: dropped {preFilter - apiRules.Count} cross-company rule(s) from API response (currentCompany={currentCompanyId})");
+                    if (!scopeCompanyIds.Any(c => string.Equals(c, companyId, StringComparison.OrdinalIgnoreCase)))
+                        scopeCompanyIds.Add(companyId);
                 }
+                if (scopeCompanyIds.Count == 0) scopeCompanyIds.Add(null); // not signed in → no company pin
 
                 // Dedupe the API response BEFORE mapping. Two duplication sources are
                 // guarded here — both lead to "same rule shown 3× in Revit" when the
@@ -893,7 +907,15 @@ namespace BIManage.Infrastructure.Api
                         .Select(r => r.RuleId)
                         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                    var allLocal = await _ruleRepository.GetRuleIdsForFetchScopeAsync(modelGuid, currentCompanyId);
+                    var allLocal = new List<(string RuleId, string Name)>();
+                    var seenLocalIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var companyId in scopeCompanyIds)
+                    {
+                        foreach (var row in await _ruleRepository.GetRuleIdsForFetchScopeAsync(modelGuid, companyId))
+                        {
+                            if (seenLocalIds.Add(row.RuleId)) allLocal.Add(row);
+                        }
+                    }
 
                     var orphanCount = 0;
                     var deletedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1014,7 +1036,15 @@ namespace BIManage.Infrastructure.Api
                             serverCategorySet.Add(s.CategoryCode.Trim());
                     }
 
-                    var localAll = await _ruleRepository.GetAllRulesForCompanyAsync(currentCompanyId);
+                    var localAll = new List<(string, string, string?, int)>();
+                    var seenSweepIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var companyId in scopeCompanyIds)
+                    {
+                        foreach (var row in await _ruleRepository.GetAllRulesForCompanyAsync(companyId))
+                        {
+                            if (seenSweepIds.Add(row.Item1 ?? "")) localAll.Add(row);
+                        }
+                    }
                     var scopeOrphanCount = 0;
                     foreach (var (localId, localName, localCat, localScope) in localAll)
                     {

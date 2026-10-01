@@ -205,6 +205,12 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
         private bool _canCreate = true;
         private bool _canUpdate = true;
 
+        // Rule ids the by-model endpoint returned on the last successful fetch (null = no
+        // successful fetch yet → show the whole local cache), plus ids saved from this
+        // dialog so a just-added rule shows before the next fetch returns it.
+        private HashSet<string>? _serverRuleIds;
+        private readonly HashSet<string> _sessionRuleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>Server's canCreate for this model — false hides New Rule/Import.</summary>
         public bool CanCreate
         {
@@ -1057,6 +1063,18 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
             return true;
         }
 
+        /// <summary>
+        /// Saves a rule to the local DB and remembers its id so a rule added/edited from this
+        /// dialog stays visible before the next by-model fetch returns it.
+        /// </summary>
+        private async Task<bool> SaveRuleLocallyAsync(Rule rule)
+        {
+            var saved = await _ruleRepository.SaveRuleAsync(rule);
+            if (saved && !string.IsNullOrEmpty(rule.RuleId))
+                _sessionRuleIds.Add(rule.RuleId);
+            return saved;
+        }
+
         public async Task LoadRulesAsync()
         {
             try
@@ -1067,6 +1085,15 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
 
                 var rules = await _ruleRepository.GetAllRulesAsync();
                 _logger?.LogInfo($"LoadRulesAsync: DB returned {rules.Count} rule(s) — UI about to bind them");
+
+                if (_serverRuleIds != null)
+                {
+                    rules = rules
+                        .Where(r => !string.IsNullOrEmpty(r.RuleId)
+                                    && (_serverRuleIds.Contains(r.RuleId) || _sessionRuleIds.Contains(r.RuleId)))
+                        .ToList();
+                    _logger?.LogInfo($"LoadRulesAsync: showing {rules.Count} rule(s) returned by the by-model endpoint");
+                }
 
                 Rules.Clear();
                 foreach (var rule in rules)
@@ -1166,6 +1193,16 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
                 {
                     _logger?.LogInfo($"Fetching rule protections by model: {modelGuid}");
                     apiRules = await _rulesSyncService.FetchRuleProtectionsByModelAsync(modelGuid);
+
+                    // A successful answer is the list to show — local rows the endpoint didn't
+                    // return (other models/projects, stale cache) stay out of this dialog.
+                    // On failure keep the previous filter (or none) so the cache still shows offline.
+                    if (_rulesSyncService.LastFetchSucceeded)
+                    {
+                        _serverRuleIds = new HashSet<string>(
+                            apiRules.Where(r => !string.IsNullOrEmpty(r.RuleId)).Select(r => r.RuleId),
+                            StringComparer.OrdinalIgnoreCase);
+                    }
 
                     // No answer (offline / failed fetch) keeps the current state.
                     var permissions = _rulesSyncService.LastPermissions;
@@ -1269,7 +1306,7 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
 
                 var preCount = (await _ruleRepository.GetAllRulesAsync()).Count;
                 _logger?.LogInfo($"SaveRuleDirectAsync: BEFORE save — local DB has {preCount} rule(s), saving '{rule.Name}' (id={rule.RuleId}, scope={rule.RuleScope}, companyId={rule.CompanyId ?? "<null>"})");
-                var success = await _ruleRepository.SaveRuleAsync(rule);
+                var success = await SaveRuleLocallyAsync(rule);
                 if (success)
                 {
                     var postCount = (await _ruleRepository.GetAllRulesAsync()).Count;
@@ -1369,7 +1406,7 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
                         var rule = ruleVm.ToRule();
                         rule.ModifiedAt = DateTime.UtcNow;
                         rule.ModifiedBy = _profileId ?? _revitUsername; // Store profileId in database
-                        await _ruleRepository.SaveRuleAsync(rule);
+                        await SaveRuleLocallyAsync(rule);
                         rulesToSync.Add(rule);
                     }
                 }
@@ -1505,7 +1542,7 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
 
                 var preCount2 = (await _ruleRepository.GetAllRulesAsync()).Count;
                 _logger?.LogInfo($"SaveEditingRuleAsync: BEFORE save — local DB has {preCount2} rule(s), saving '{rule.Name}' (id={rule.RuleId}, scope={rule.RuleScope}, companyId={rule.CompanyId ?? "<null>"}, isNew={EditingRule.IsNew})");
-                var success = await _ruleRepository.SaveRuleAsync(rule);
+                var success = await SaveRuleLocallyAsync(rule);
 
                 if (success)
                 {
@@ -1620,7 +1657,7 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
                         _logger?.LogInfo($"Project admin override delete: creating new disabled project-level rule from company-wide rule {ruleId} (projectId={autoProjectId ?? "<null>"})");
                     }
 
-                    var saved = await _ruleRepository.SaveRuleAsync(overrideRule);
+                    var saved = await SaveRuleLocallyAsync(overrideRule);
                     if (saved)
                     {
                         await _ruleService.RefreshRules();
@@ -1759,7 +1796,7 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
                         }
                     }
 
-                    var saved = await _ruleRepository.SaveRuleAsync(rule);
+                    var saved = await SaveRuleLocallyAsync(rule);
                     if (saved)
                     {
                         importedCount++;

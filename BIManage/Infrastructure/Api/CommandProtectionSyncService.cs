@@ -33,6 +33,13 @@ namespace BIManage.Infrastructure.Api
         /// </summary>
         public ProtectionPermissions? LastPermissions { get; private set; }
 
+        /// <summary>
+        /// True when the last <see cref="FetchByModelGuidFromApiAsync"/> got a parseable answer
+        /// from the server (an empty list included) — its result is then the authoritative
+        /// list to display. False on network/auth/parse failure.
+        /// </summary>
+        public bool LastFetchSucceeded { get; private set; }
+
         public CommandProtectionSyncService(
             AuthenticatedHttpClient? httpClient = null,
             OfflineQueueRepository? offlineQueue = null,
@@ -479,6 +486,7 @@ namespace BIManage.Infrastructure.Api
         public async Task<List<CommandSettingViewModel>> FetchByModelGuidFromApiAsync(string modelGuid, string? fallbackProfileId = null)
         {
             LastPermissions = null;
+            LastFetchSucceeded = false;
             try
             {
                 _logger?.LogInfo($"Fetching command protections for model: {modelGuid}");
@@ -537,26 +545,30 @@ namespace BIManage.Infrastructure.Api
                 }
 
                 // Tenant-scope filter: drop API rows whose companyId doesn't match the
-                // signed-in user. Defense-in-depth against the server's by-model endpoint
-                // returning a model's protections without verifying the caller's company —
-                // prevents a previous session's data (e.g. Zestine) from leaking into the
-                // current session's view (e.g. Conserve). Run BEFORE the empty-server
-                // early-return so a fully cross-tenant payload still triggers the cleanup.
-                var currentCompanyId = GetCurrentCompanyId();
-                if (apiCommands != null && currentCompanyId != null)
-                {
-                    var preFilter = apiCommands.Count;
-                    apiCommands = apiCommands
-                        .Where(c => string.IsNullOrWhiteSpace(c.CompanyId)
-                                    || string.Equals(c.CompanyId, currentCompanyId, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
-                    if (apiCommands.Count != preFilter)
-                        _logger?.LogInfo($"Tenant filter: dropped {preFilter - apiCommands.Count} cross-company command(s) from API response (currentCompany={currentCompanyId})");
-                }
+                // signed-in user — REMOVED. With company collaboration the server legitimately
+                // returns the project owner's protections to a collaborating company (read-only,
+                // canCreate/canUpdate=false); dropping them made the dialog show nothing while
+                // the endpoint had rows. The server scopes the response by the caller's JWT, so
+                // the response is shown as-is.
+                if (apiCommands == null) apiCommands = new List<CommandProtectionApiRequest>();
+                LastFetchSucceeded = true;
 
-                // Cross-tenant local cleanup runs in both the empty-server and populated-server
-                // paths below. Performed up here once so both branches benefit without duplication.
-                if (_repository != null && currentCompanyId != null)
+                var currentCompanyId = GetCurrentCompanyId();
+
+                // Companies whose rows this response speaks for: the caller's own company plus
+                // any company the server returned rows for (e.g. the project owner). Local
+                // reconciliation below is limited to these so another open model's rows from an
+                // unrelated company are left alone.
+                var scopeCompanyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (currentCompanyId != null) scopeCompanyIds.Add(currentCompanyId);
+                foreach (var c in apiCommands)
+                    if (!string.IsNullOrWhiteSpace(c.CompanyId)) scopeCompanyIds.Add(c.CompanyId!);
+                var isCollaborationView = currentCompanyId != null && scopeCompanyIds.Count > 1;
+
+                // Cross-tenant local cleanup (rows left from a previous sign-in to another
+                // company). Skipped for a collaboration view — there the "other" company's rows
+                // are the valid answer and deleting them would race their re-save below.
+                if (_repository != null && currentCompanyId != null && !isCollaborationView)
                 {
                     try
                     {
@@ -570,7 +582,7 @@ namespace BIManage.Infrastructure.Api
                     }
                 }
 
-                if (apiCommands == null || apiCommands.Count == 0)
+                if (apiCommands.Count == 0)
                 {
                     _logger?.LogInfo($"No command protections returned from API for model {modelGuid}");
                     // Server returned empty — reconcile across the full /by-model response
@@ -585,7 +597,7 @@ namespace BIManage.Infrastructure.Api
                         try
                         {
                             var pendingCodes = await GetPendingCommandCodesAsync();
-                            var localRecords = await _repository.GetCommandSettingIdsForFetchScopeAsync(modelGuid, currentCompanyId);
+                            var localRecords = await GetLocalIdsForFetchScopeAsync(modelGuid, scopeCompanyIds);
                             var orphanCount = 0;
                             foreach (var (localId, localCode) in localRecords)
                             {
@@ -661,7 +673,7 @@ namespace BIManage.Infrastructure.Api
                             .Select(c => c.CommandCode)
                             .ToHashSet(StringComparer.OrdinalIgnoreCase);
                         var pendingCodes = await GetPendingCommandCodesAsync();
-                        var localRecords = await _repository.GetCommandSettingIdsForFetchScopeAsync(modelGuid, currentCompanyId);
+                        var localRecords = await GetLocalIdsForFetchScopeAsync(modelGuid, scopeCompanyIds);
                         var orphanCount = 0;
                         foreach (var (localId, localCode) in localRecords)
                         {
@@ -696,6 +708,27 @@ namespace BIManage.Infrastructure.Api
                 _logger?.LogError($"Failed to fetch command protections for model {modelGuid}: {ex.Message}", ex);
                 return new List<CommandSettingViewModel>();
             }
+        }
+
+        /// <summary>
+        /// Local rows in the by-model fetch scope for each company in <paramref name="companyIds"/>
+        /// (no company → all), de-duplicated by id.
+        /// </summary>
+        private async Task<List<(string Id, string CommandCode)>> GetLocalIdsForFetchScopeAsync(string modelGuid, ICollection<string> companyIds)
+        {
+            if (companyIds.Count == 0)
+                return await _repository!.GetCommandSettingIdsForFetchScopeAsync(modelGuid, null);
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var results = new List<(string, string)>();
+            foreach (var companyId in companyIds)
+            {
+                foreach (var row in await _repository!.GetCommandSettingIdsForFetchScopeAsync(modelGuid, companyId))
+                {
+                    if (seen.Add(row.Id)) results.Add(row);
+                }
+            }
+            return results;
         }
 
         /// <summary>

@@ -1520,9 +1520,15 @@ namespace BIManageRevit.BIManage.Revit.Applications
                             }
                             else
                             {
-                                externalCount++;
+                                // Our own add-in is left out of both the count and the names —
+                                // counting it but not listing it reported 8 external add-ins
+                                // next to a 7-name list.
                                 if (!string.IsNullOrWhiteSpace(name) &&
-                                    !_selfAddinKeywords.Any(k => name.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0))
+                                    _selfAddinKeywords.Any(k => name.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0))
+                                    continue;
+
+                                externalCount++;
+                                if (!string.IsNullOrWhiteSpace(name))
                                     names.Add(name);
                             }
                         }
