@@ -2273,6 +2273,54 @@ namespace BIManageRevit.BIManage.Revit.Applications
         /// </summary>
         private async System.Threading.Tasks.Task<bool> CheckAndRegisterModel(Autodesk.Revit.DB.Document doc)
         {
+            var verdict = new RegistrationVerdict();
+            try
+            {
+                return await CheckAndRegisterModelCore(doc, verdict);
+            }
+            finally
+            {
+                // The model-session sync waits on this verdict — every exit path that didn't
+                // reach the server (early return, exception) must still release it.
+                if (!verdict.Published)
+                {
+                    if (verdict.ModelGuids.Count == 0)
+                    {
+                        try
+                        {
+                            if (doc != null && doc.IsValidObject && !string.IsNullOrEmpty(doc.PathName))
+                                verdict.ModelGuids.Add(GetModelGuid(doc));
+                        }
+                        catch { /* no guid — session sync falls back to its timeout */ }
+                    }
+                    PublishRegistrationVerdict(verdict, rejected: false);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Guids the model-session sync may use for this document (raw and reconciled),
+        /// and whether the server's registration verdict has been published for them.
+        /// </summary>
+        private sealed class RegistrationVerdict
+        {
+            public System.Collections.Generic.List<string> ModelGuids { get; } = new System.Collections.Generic.List<string>();
+            public bool Published { get; set; }
+        }
+
+        private static void PublishRegistrationVerdict(RegistrationVerdict verdict, bool rejected)
+        {
+            verdict.Published = true;
+            foreach (var guid in verdict.ModelGuids)
+                ModelRegistrationGate.Publish(guid, rejected);
+        }
+
+        private async System.Threading.Tasks.Task<bool> CheckAndRegisterModelCore(Autodesk.Revit.DB.Document doc, RegistrationVerdict verdict)
+        {
+            // Captured before the first await, while still on Revit's UI thread — the
+            // continuations below may resume on a pool thread, where a dialog can't be shown.
+            var uiDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+
             try
             {
                 var modelRepo = _services?.GetService<RegisteredModelsRepository>();
@@ -2329,6 +2377,7 @@ namespace BIManageRevit.BIManage.Revit.Applications
                     }
                     return true; // Fail open
                 }
+                verdict.ModelGuids.Add(modelGuid);
 
                 // DUPLICATE PREVENTION: Check if model already exists by name and central path
                 // This handles cases where GUID differs (e.g., first open as detached, then as local copy)
@@ -2337,6 +2386,7 @@ namespace BIManageRevit.BIManage.Revit.Applications
                 {
                     Logger?.LogInfo($"Found existing registration for '{modelName}' - using existing GUID: {existingGuid} (instead of {modelGuid})");
                     modelGuid = existingGuid;
+                    verdict.ModelGuids.Add(modelGuid);
 
                     // Update central path if we have one now but the existing record doesn't
                     if (!string.IsNullOrEmpty(centralModelPath))
@@ -2451,7 +2501,27 @@ namespace BIManageRevit.BIManage.Revit.Applications
                     await modelRepo.UpdateLastOpenedAsync(modelGuid, username);
 
                     // Sync model to backend API
-                    await SyncModelToApiAsync(modelGuid);
+                    var resyncResult = await SyncModelToApiAsync(modelGuid);
+                    PublishRegistrationVerdict(verdict, rejected: resyncResult != null && resyncResult.Rejected);
+
+                    // The local record can outlive a server rejection (e.g. company outside the
+                    // project's collaboration chain), so the re-POST on every open is where the
+                    // 400 actually surfaces. Don't leave the ribbon green for a model the server refused.
+                    if (resyncResult != null && resyncResult.Rejected)
+                    {
+                        Logger?.LogWarning(
+                            $"Model is registered locally, but the server rejected registration " +
+                            $"(Status: {resyncResult.StatusCode}, Body: {resyncResult.ResponseBody}). Model: {doc.Title} ({modelGuid}).");
+                        BIManageRevit.Commands.RibbonCommands.RegisterModelCommand.UpdateButtonAppearance(false);
+                        ShowRegistrationRejectedDialog(uiDispatcher, resyncResult, doc);
+                    }
+                    else if (resyncResult != null && resyncResult.ServerAccepted)
+                    {
+                        TaskRunner.FireAndForget(
+                            CheckCollaborationWarningAsync(uiDispatcher, doc, modelGuid, resyncResult.ProjectId ?? resolvedProjectId),
+                            Logger,
+                            "CheckCollaborationWarning");
+                    }
 
                     return true; // Model registered and active - proceed with initialization
                 }
@@ -2511,11 +2581,17 @@ namespace BIManageRevit.BIManage.Revit.Applications
                         // (model-sessions, metrics, model-syncs) cascaded-failed with
                         // FK constraint violations against the missing parent row.
                         var serverResult = await SyncModelToApiAsync(modelGuid);
+                        PublishRegistrationVerdict(verdict, rejected: serverResult != null && serverResult.Rejected);
 
                         if (serverResult != null && serverResult.ServerAccepted)
                         {
                             Logger?.LogInfo($"Model auto-registered successfully: {modelName} ({modelGuid})");
                             BIManageRevit.Commands.RibbonCommands.RegisterModelCommand.UpdateButtonAppearance(true);
+                            TaskRunner.FireAndForget(
+                                CheckCollaborationWarningAsync(uiDispatcher, doc, modelGuid,
+                                    serverResult.ProjectId ?? cloudProjectId ?? modelInfo.ZemanageProjectId),
+                                Logger,
+                                "CheckCollaborationWarning");
                         }
                         else if (serverResult != null && serverResult.IsTenantNotProvisioned)
                         {
@@ -2524,6 +2600,7 @@ namespace BIManageRevit.BIManage.Revit.Applications
                                 $"Ask your BIManage administrator to provision the company — until then, model/session/metrics sync cannot land on the server. " +
                                 $"Model: {modelName} ({modelGuid}).");
                             BIManageRevit.Commands.RibbonCommands.RegisterModelCommand.UpdateButtonAppearance(false);
+                            ShowRegistrationRejectedDialog(uiDispatcher, serverResult, doc);
                         }
                         else if (serverResult != null && serverResult.Rejected)
                         {
@@ -2532,6 +2609,8 @@ namespace BIManageRevit.BIManage.Revit.Applications
                                 $"(Status: {serverResult.StatusCode}, Body: {serverResult.ResponseBody}). " +
                                 $"Ribbon will stay un-green until the server accepts on a future re-open. Model: {modelName} ({modelGuid}).");
                             BIManageRevit.Commands.RibbonCommands.RegisterModelCommand.UpdateButtonAppearance(false);
+
+                            ShowRegistrationRejectedDialog(uiDispatcher, serverResult, doc);
                         }
                         else if (serverResult != null && serverResult.WasQueued)
                         {
@@ -2732,6 +2811,161 @@ namespace BIManageRevit.BIManage.Revit.Applications
             if (doc.IsWorkshared)
                 return "workshared";
             return "local";
+        }
+
+        /// <summary>
+        /// Shows the "Registration Rejected" popup with the server's message on the UI thread,
+        /// then closes the rejected model (only that document) once the popup is dismissed.
+        /// BeginInvoke so the modal popup doesn't hold up the rest of the document-open flow.
+        /// </summary>
+        private void ShowRegistrationRejectedDialog(System.Windows.Threading.Dispatcher uiDispatcher, ModelSyncResult result, Autodesk.Revit.DB.Document doc)
+        {
+            var statusCode = result.StatusCode;
+            var responseBody = result.ResponseBody;
+            uiDispatcher.BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    global::BIManageRevit.BIManage.Views.ModelRegistrationDialog.ShowServerRejected(statusCode, responseBody, modelWillClose: true);
+                }
+                catch (Exception dialogEx)
+                {
+                    Logger?.LogWarning($"Registration-rejected dialog failed: {dialogEx.Message}");
+                }
+
+                // Close even if the popup failed — the server refused this model either way.
+                try
+                {
+                    if (doc != null && doc.IsValidObject)
+                        TryCloseDocumentDeferred(doc, "Server rejected model registration");
+                }
+                catch (Exception closeEx)
+                {
+                    Logger?.LogWarning($"Closing rejected model failed: {closeEx.Message}");
+                }
+            }));
+        }
+
+        /// <summary>
+        /// An open, server-accepted model and the project it is registered under — what a
+        /// CollaborationWarning (HTTP check or SignalR push) is matched against.
+        /// </summary>
+        private sealed class OpenModelProject
+        {
+            public string ModelGuid { get; set; } = "";
+            public string ProjectId { get; set; } = "";
+            public Autodesk.Revit.DB.Document? Doc { get; set; }
+            public bool CloseRequested { get; set; }
+        }
+
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, OpenModelProject> _openModelProjects =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, OpenModelProject>(StringComparer.OrdinalIgnoreCase);
+
+        // Revit's UI dispatcher, captured on document open — SignalR pushes arrive on a pool thread.
+        private System.Windows.Threading.Dispatcher? _collaborationUiDispatcher;
+
+        /// <summary>
+        /// Runs right after the server accepts a model registration: asks
+        /// company-collaborations/warnings/{projectId} whether this company is outside the
+        /// project's collaboration chain. A warning shows the popup and closes the model;
+        /// no warning changes nothing. Also tracks the model so a live CollaborationWarning
+        /// push can be matched to it while it stays open.
+        /// </summary>
+        private async System.Threading.Tasks.Task CheckCollaborationWarningAsync(
+            System.Windows.Threading.Dispatcher uiDispatcher, Autodesk.Revit.DB.Document doc, string modelGuid, string? projectId)
+        {
+            if (string.IsNullOrEmpty(projectId))
+            {
+                Logger?.LogDebug($"[CollaborationWarning] No project id for model {modelGuid} — check skipped");
+                return;
+            }
+
+            _collaborationUiDispatcher = uiDispatcher;
+            var entry = new OpenModelProject { ModelGuid = modelGuid, ProjectId = projectId!, Doc = doc };
+            _openModelProjects[modelGuid] = entry;
+
+            var modelSyncService = _services?.GetService<ModelSyncService>();
+            if (modelSyncService == null) return;
+
+            var warning = await modelSyncService.FetchCollaborationWarningAsync(projectId);
+            if (string.IsNullOrEmpty(warning)) return;
+
+            Logger?.LogWarning($"[CollaborationWarning] Active warning for project {projectId} — model {modelGuid} will be closed: {warning}");
+            ShowCollaborationWarningAndClose(entry, warning!);
+        }
+
+        /// <summary>
+        /// SignalR "CollaborationWarning" push. Applies only to open models registered under
+        /// the warned project; anything else is ignored (the next open of that project gets
+        /// the same answer from the HTTP check).
+        /// </summary>
+        public void OnCollaborationWarningReceived(string? projectId, string? message)
+        {
+            if (!Guid.TryParse(projectId, out var warnedProject))
+            {
+                Logger?.LogWarning($"[CollaborationWarning] Push ignored — no valid project id ('{projectId}')");
+                return;
+            }
+
+            var text = string.IsNullOrWhiteSpace(message) ? ModelSyncService.DefaultCollaborationWarning : message!;
+            var matched = 0;
+            foreach (var entry in _openModelProjects.Values)
+            {
+                if (Guid.TryParse(entry.ProjectId, out var openProject) && openProject == warnedProject)
+                {
+                    matched++;
+                    ShowCollaborationWarningAndClose(entry, text);
+                }
+            }
+            Logger?.LogInfo($"[CollaborationWarning] Push for project {warnedProject} matched {matched} open model(s)");
+        }
+
+        /// <summary>
+        /// Shows the collaboration-warning popup on the UI thread, then closes that model
+        /// (only that document) once the popup is dismissed.
+        /// </summary>
+        private void ShowCollaborationWarningAndClose(OpenModelProject entry, string message)
+        {
+            var uiDispatcher = _collaborationUiDispatcher;
+            if (uiDispatcher == null) return;
+
+            uiDispatcher.BeginInvoke(new Action(() =>
+            {
+                // HTTP check and SignalR push can both fire for the same open — one popup only.
+                if (entry.CloseRequested) return;
+
+                var doc = entry.Doc;
+                bool isOpen;
+                try { isOpen = doc != null && doc.IsValidObject; }
+                catch { isOpen = false; }
+                if (!isOpen)
+                {
+                    // Tracked model was closed meanwhile — drop the stale entry (unless a re-open replaced it).
+                    ((System.Collections.Generic.ICollection<System.Collections.Generic.KeyValuePair<string, OpenModelProject>>)_openModelProjects)
+                        .Remove(new System.Collections.Generic.KeyValuePair<string, OpenModelProject>(entry.ModelGuid, entry));
+                    return;
+                }
+                entry.CloseRequested = true;
+
+                try
+                {
+                    global::BIManageRevit.BIManage.Views.ModelRegistrationDialog.ShowCollaborationWarning(message, modelWillClose: true);
+                }
+                catch (Exception dialogEx)
+                {
+                    Logger?.LogWarning($"Collaboration-warning dialog failed: {dialogEx.Message}");
+                }
+
+                try
+                {
+                    if (doc!.IsValidObject)
+                        TryCloseDocumentDeferred(doc, "Company is outside the project's collaboration chain");
+                }
+                catch (Exception closeEx)
+                {
+                    Logger?.LogWarning($"Closing model after collaboration warning failed: {closeEx.Message}");
+                }
+            }));
         }
 
         /// <summary>

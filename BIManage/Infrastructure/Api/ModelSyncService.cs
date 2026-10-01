@@ -29,6 +29,9 @@ namespace BIManage.Infrastructure.Api
         private readonly ILogger? _logger;
         private const string Endpoint = "/api/v1/Revit/models/register";
         private const string GetEndpoint = "/api/v1/Revit/models";
+        private const string CollaborationWarningsEndpoint = "/api/v1/company-collaborations/warnings";
+        public const string DefaultCollaborationWarning =
+            "Another company is collaborating on this project. Your company is not part of that collaboration.";
         // Project-entity endpoints — model.projectId points at one of these. The model's
         // own localProjectName / projectName fields are a SNAPSHOT taken at registration
         // time (from Revit ProjectInformation.Name) and never refresh. The project
@@ -172,7 +175,12 @@ namespace BIManage.Infrastructure.Api
                 if (response.IsSuccessStatusCode)
                 {
                     _logger?.LogInfo($"Model synced via HTTP: {modelGuid} (Status: {response.StatusCode})");
-                    return ModelSyncResult.ServerAcceptedResult((int)response.StatusCode);
+
+                    // The server may place the model under a different project than the one we
+                    // sent (e.g. the company default) — prefer its answer for follow-up calls.
+                    var acceptedBody = await response.Content.ReadAsStringAsync();
+                    var projectId = ExtractProjectIdFromJson(acceptedBody) ?? apiRequest.ProjectId;
+                    return ModelSyncResult.ServerAcceptedResult((int)response.StatusCode, projectId);
                 }
 
                 var responseBody = await response.Content.ReadAsStringAsync();
@@ -224,6 +232,94 @@ namespace BIManage.Infrastructure.Api
                 }
                 return ModelSyncResult.NoTransport(ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Pulls the project GUID out of a register response — top level or under <c>data</c>.
+        /// Returns null when the body carries no usable project id.
+        /// </summary>
+        private static string? ExtractProjectIdFromJson(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                var candidate = ReadFirstString(root, "projectId", "zemanageProjectId");
+                if (candidate == null
+                    && root.ValueKind == JsonValueKind.Object
+                    && root.TryGetProperty("data", out var dataEl))
+                {
+                    candidate = ReadFirstString(dataEl, "projectId", "zemanageProjectId");
+                }
+
+                return Guid.TryParse(candidate, out var parsed) && parsed != Guid.Empty
+                    ? parsed.ToString()
+                    : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// The "check on project open" call: GET /api/v1/company-collaborations/warnings/{projectId}.
+        /// Returns the warning text to show the user when the caller's company is outside the
+        /// project's collaboration chain — i.e. the response's <c>data</c> list holds a
+        /// still-active warning. Returns null when the list is empty, and on any
+        /// transport/server failure (fail open — never block a model on a check that could not run).
+        /// </summary>
+        public async Task<string?> FetchCollaborationWarningAsync(string? projectId)
+        {
+            if (!Guid.TryParse(projectId, out var projectGuid) || projectGuid == Guid.Empty)
+            {
+                _logger?.LogDebug($"[CollaborationWarning] Skipped — no valid project id ('{projectId}')");
+                return null;
+            }
+            if (_httpClient == null || !_httpClient.IsAuthenticated)
+            {
+                _logger?.LogDebug("[CollaborationWarning] Skipped — HTTP client not available/authenticated");
+                return null;
+            }
+
+            var url = $"{CollaborationWarningsEndpoint}/{projectGuid}";
+            try
+            {
+                var response = await _httpClient.GetAsync(url);
+                var body = await response.Content.ReadAsStringAsync();
+                var statusCode = (int)response.StatusCode;
+                _logger?.LogInfo($"[CollaborationWarning] GET {url} → {statusCode}: {(body.Length > 600 ? body.Substring(0, 600) + "...(truncated)" : body)}");
+
+                return response.IsSuccessStatusCode ? ExtractActiveWarningMessage(body) : null;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug($"[CollaborationWarning] {url} failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Reads the warning text from a warnings response. Only a non-empty <c>data</c> list
+        /// counts — an empty list means the company is inside the chain and nothing is shown.
+        /// </summary>
+        private static string? ExtractActiveWarningMessage(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (root.ValueKind == JsonValueKind.Object
+                    && root.TryGetProperty("data", out var dataEl)
+                    && dataEl.ValueKind == JsonValueKind.Array
+                    && dataEl.GetArrayLength() > 0)
+                {
+                    return ReadFirstString(dataEl[0], "message") ?? DefaultCollaborationWarning;
+                }
+            }
+            catch { /* unparseable body — nothing to show */ }
+            return null;
         }
 
         /// <summary>
@@ -1000,6 +1096,11 @@ namespace BIManage.Infrastructure.Api
         public string? ErrorMessage { get; set; }
 
         /// <summary>
+        /// Project the server registered the model under (accepted results only).
+        /// </summary>
+        public string? ProjectId { get; set; }
+
+        /// <summary>
         /// True when the server rejected the POST because the tenant has no default project
         /// (server body contains "No default project found for this company"). Surface this
         /// in the UI so users know to contact their admin instead of retrying endlessly.
@@ -1010,8 +1111,8 @@ namespace BIManage.Infrastructure.Api
         public bool WasQueued       => Outcome == ModelSyncOutcome.Queued;
         public bool Rejected        => Outcome == ModelSyncOutcome.RejectedByServer;
 
-        public static ModelSyncResult ServerAcceptedResult(int statusCode)
-            => new ModelSyncResult { Outcome = ModelSyncOutcome.ServerAccepted, StatusCode = statusCode };
+        public static ModelSyncResult ServerAcceptedResult(int statusCode, string? projectId = null)
+            => new ModelSyncResult { Outcome = ModelSyncOutcome.ServerAccepted, StatusCode = statusCode, ProjectId = projectId };
 
         public static ModelSyncResult Queued(int? statusCode = null, string? responseBody = null, string? errorMessage = null)
             => new ModelSyncResult { Outcome = ModelSyncOutcome.Queued, StatusCode = statusCode, ResponseBody = responseBody, ErrorMessage = errorMessage };

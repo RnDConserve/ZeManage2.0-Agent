@@ -202,6 +202,23 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
         public string CurrentUser => _revitUsername;
         public bool IsCompanyAdmin => _isCompanyAdmin;
 
+        private bool _canCreate = true;
+        private bool _canUpdate = true;
+
+        /// <summary>Server's canCreate for this model — false hides New Rule/Import.</summary>
+        public bool CanCreate
+        {
+            get => _canCreate;
+            private set { _canCreate = value; OnPropertyChanged(); }
+        }
+
+        /// <summary>Server's canUpdate for this model — false hides row Edit and locks the status toggle.</summary>
+        public bool CanUpdate
+        {
+            get => _canUpdate;
+            private set { _canUpdate = value; OnPropertyChanged(); }
+        }
+
         public ObservableCollection<RuleViewModel> Rules
         {
             get => _rules;
@@ -1149,6 +1166,15 @@ namespace BIManageRevit.BIManage.ViewModels.Rules
                 {
                     _logger?.LogInfo($"Fetching rule protections by model: {modelGuid}");
                     apiRules = await _rulesSyncService.FetchRuleProtectionsByModelAsync(modelGuid);
+
+                    // No answer (offline / failed fetch) keeps the current state.
+                    var permissions = _rulesSyncService.LastPermissions;
+                    if (permissions != null)
+                    {
+                        CanCreate = permissions.CanCreate;
+                        CanUpdate = permissions.CanUpdate;
+                        _logger?.LogInfo($"Rule protection permissions: canCreate={CanCreate}, canUpdate={CanUpdate}");
+                    }
                 }
                 else
                 {

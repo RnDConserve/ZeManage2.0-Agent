@@ -629,6 +629,9 @@ namespace BIManage.Revit.EventRegistry
                     {
                         SyncModelSessionStatusUpdateAsync(sessionId, modelGuid, "Closed", revitUsername);
                     }
+
+                    // Next open of this model must wait for a fresh registration verdict.
+                    ModelRegistrationGate.Reset(modelGuid);
                 }
 
                 // Clear cache entry now that the doc is closing.

@@ -27,6 +27,12 @@ namespace BIManage.Infrastructure.Api
         private readonly CommandProtectionRepository? _repository;
         private readonly IUserService? _userService;
 
+        /// <summary>
+        /// canCreate/canUpdate from the last <see cref="FetchByModelGuidFromApiAsync"/> response;
+        /// null when that fetch didn't get a parseable answer.
+        /// </summary>
+        public ProtectionPermissions? LastPermissions { get; private set; }
+
         public CommandProtectionSyncService(
             AuthenticatedHttpClient? httpClient = null,
             OfflineQueueRepository? offlineQueue = null,
@@ -472,6 +478,7 @@ namespace BIManage.Infrastructure.Api
         /// </summary>
         public async Task<List<CommandSettingViewModel>> FetchByModelGuidFromApiAsync(string modelGuid, string? fallbackProfileId = null)
         {
+            LastPermissions = null;
             try
             {
                 _logger?.LogInfo($"Fetching command protections for model: {modelGuid}");
@@ -502,6 +509,7 @@ namespace BIManage.Infrastructure.Api
                 {
                     using var doc = JsonDocument.Parse(json);
                     var root = doc.RootElement;
+                    LastPermissions = ProtectionPermissions.FromResponse(root);
 
                     if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array)
                     {

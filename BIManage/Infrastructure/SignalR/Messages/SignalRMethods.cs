@@ -72,6 +72,12 @@ namespace BIManage.Infrastructure.SignalR.Messages
         /// EmployeeActivationListener (this side).</summary>
         public const string EmployeeActiveStatusChanged = "EmployeeActiveStatusChanged";
 
+        /// <summary>Sent to a company that works on a project but is outside the collaboration
+        /// network formed on it — see CollaborationRequestService.NotifyOutsideCompaniesAsync
+        /// (backend) and CollaborationWarningListener (this side). Real-time echo of
+        /// GET company-collaborations/warnings/{projectId}.</summary>
+        public const string CollaborationWarning = "CollaborationWarning";
+
         // =============================================
         // Session & Metrics
         // =============================================

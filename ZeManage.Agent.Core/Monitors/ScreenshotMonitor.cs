@@ -185,9 +185,11 @@ public sealed class ScreenshotMonitor : BackgroundService
         {
             // Re-check right after acquiring the lock, not before — the whole point is to
             // catch the case where another trigger was already mid-capture when this one
-            // queued up behind it and only just finished.
+            // queued up behind it and only just finished. OnDemand is exempt: an admin explicitly
+            // asked for a shot and the dashboard polls for a fresh OnDemand upload, so silently
+            // dropping it would leave them waiting on an image that never comes.
             var lastCapture = _state.LatestScreenshotAt;
-            if (lastCapture is not null)
+            if (lastCapture is not null && trigger != "OnDemand")
             {
                 var sinceLast = DateTime.Now - lastCapture.Value;
                 if (sinceLast < _minGapBetweenCaptures)

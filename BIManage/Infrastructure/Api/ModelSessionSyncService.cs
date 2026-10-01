@@ -29,6 +29,8 @@ namespace BIManage.Infrastructure.Api
         private readonly ILogger? _logger;
 
         private const string Endpoint = "/api/v1/Revit/models/model-sessions";
+        // The register round trip has been seen to take 35s+ on a slow server.
+        private static readonly TimeSpan RegistrationVerdictTimeout = TimeSpan.FromSeconds(90);
         private const string HubMethod = "SendModelSessionData";
 
         public ModelSessionSyncService(
@@ -117,6 +119,12 @@ namespace BIManage.Infrastructure.Api
                 if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(modelGuid))
                 {
                     _logger?.LogDebug($"[{kind}] skipped: missing sessionId or modelGuid");
+                    return false;
+                }
+
+                if (ModelRegistrationGate.IsRejected(modelGuid))
+                {
+                    _logger?.LogDebug($"[{kind}] skipped: server rejected registration of model {modelGuid}");
                     return false;
                 }
 
@@ -214,6 +222,14 @@ namespace BIManage.Infrastructure.Api
         {
             try
             {
+                // No model-session call may go out for a model whose registration the server
+                // refused. The register POST races this one, so wait for its verdict first.
+                if (await ModelRegistrationGate.WaitIsRejectedAsync(request.ModelGuid, RegistrationVerdictTimeout))
+                {
+                    _logger?.LogWarning($"Model session sync skipped — server rejected registration of model {request.ModelGuid} ({request.DocumentTitle})");
+                    return false;
+                }
+
                 _logger?.LogInfo($"Syncing model session: {request.DocumentTitle} (Session: {request.SessionId})");
 
                 // Guard: parent session must be confirmed on server before posting model_session.
@@ -631,6 +647,12 @@ namespace BIManage.Infrastructure.Api
         {
             try
             {
+                if (ModelRegistrationGate.IsRejected(modelGuid))
+                {
+                    _logger?.LogInfo($"Model session status update ({status}) skipped — server rejected registration of model {modelGuid}");
+                    return false;
+                }
+
                 _logger?.LogInfo($"Updating model session status: {sessionId} (ModelGuid: {modelGuid}, Status: {status})");
 
                 var updateRequest = new ModelSessionStatusUpdateRequest

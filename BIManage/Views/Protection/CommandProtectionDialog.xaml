@@ -387,14 +387,17 @@
 
                 <!-- Action Buttons (Right Side) -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <!-- Import / Add hidden when the server says canCreate=false -->
                     <Button Content="Import" Style="{StaticResource WhiteButton}"
-                            Click="Import_Click" Margin="0,0,6,0"/>
+                            Click="Import_Click" Margin="0,0,6,0"
+                            Visibility="{Binding CanCreate, Converter={StaticResource BoolToVisibilityConverter}}"/>
                     <Button Content="Export" Style="{StaticResource WhiteButton}"
                             Click="Export_Click" Margin="0,0,6,0"/>
                     <Button Content="Refresh" Style="{StaticResource WhiteButton}"
                             Click="Refresh_Click" Margin="0,0,10,0"/>
                     <Button Content="+ Add Command" Style="{StaticResource PrimaryGradientButton}"
-                            Click="AddCommand_Click"/>
+                            Click="AddCommand_Click"
+                            Visibility="{Binding CanCreate, Converter={StaticResource BoolToVisibilityConverter}}"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -553,8 +556,10 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <!-- Hidden when the server says canUpdate=false -->
                                             <Button Style="{StaticResource IconButton}" ToolTip="Edit Command"
-                                                    Click="EditButton_Click">
+                                                    Click="EditButton_Click"
+                                                    Visibility="{Binding DataContext.CanUpdate, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
                                                 <Path Data="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
                                                       Fill="#3B82F6" Width="13" Height="13" Stretch="Uniform"/>
                                             </Button>

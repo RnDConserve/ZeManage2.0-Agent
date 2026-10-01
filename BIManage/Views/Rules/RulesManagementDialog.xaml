@@ -397,14 +397,17 @@
 
                 <!-- Action Buttons (Right Side) -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <!-- Import / New Rule hidden when the server says canCreate=false -->
                     <Button Content="Import" Style="{StaticResource WhiteButton}"
-                            Command="{Binding ImportExcelCommand}" Margin="0,0,6,0"/>
+                            Command="{Binding ImportExcelCommand}" Margin="0,0,6,0"
+                            Visibility="{Binding CanCreate, Converter={StaticResource BoolToVisibilityConverter}}"/>
                     <Button Content="Export" Style="{StaticResource WhiteButton}"
                             Command="{Binding ExportExcelCommand}" Margin="0,0,6,0"/>
                     <Button Content="Refresh" Style="{StaticResource WhiteButton}"
                             Command="{Binding RefreshCommand}" Margin="0,0,10,0"/>
                     <Button x:Name="AddNewRuleButton" Content="+ New Rule" Style="{StaticResource PrimaryGradientButton}"
-                            Click="AddNewRule_Click"/>
+                            Click="AddNewRule_Click"
+                            Visibility="{Binding CanCreate, Converter={StaticResource BoolToVisibilityConverter}}"/>
                 </StackPanel>
             </Grid>
         </Border>
@@ -462,8 +465,10 @@
                             <DataGridTemplateColumn x:Name="StatusToggleColumn" Header="Status" Width="48">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
+                                        <!-- Toggling status is an edit — locked when canUpdate=false -->
                                         <Button Click="StatusToggle_Click" Cursor="Hand"
-                                                ToolTip="{Binding StatusTooltip}" HorizontalAlignment="Center">
+                                                ToolTip="{Binding StatusTooltip}" HorizontalAlignment="Center"
+                                                IsEnabled="{Binding DataContext.CanUpdate, RelativeSource={RelativeSource AncestorType=Window}}">
                                             <Button.Template>
                                                 <ControlTemplate TargetType="Button">
                                                     <Grid Width="32" Height="16">
@@ -621,8 +626,10 @@
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <!-- Hidden when the server says canUpdate=false -->
                                             <Button Style="{StaticResource IconButton}" ToolTip="Edit Rule"
-                                                    Click="EditButton_Click">
+                                                    Click="EditButton_Click"
+                                                    Visibility="{Binding DataContext.CanUpdate, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisibilityConverter}}">
                                                 <Path Data="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
                                                       Fill="#3B82F6" Width="13" Height="13" Stretch="Uniform"/>
                                             </Button>

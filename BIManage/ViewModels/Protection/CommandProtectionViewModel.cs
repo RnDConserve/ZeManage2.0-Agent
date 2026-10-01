@@ -80,6 +80,23 @@ namespace BIManageRevit.BIManage.ViewModels.Protection
         /// </summary>
         public bool IsCompanyAdmin { get; set; }
 
+        private bool _canCreate = true;
+        private bool _canUpdate = true;
+
+        /// <summary>Server's canCreate for this model — false hides Add/Import.</summary>
+        public bool CanCreate
+        {
+            get => _canCreate;
+            private set { _canCreate = value; OnPropertyChanged(); }
+        }
+
+        /// <summary>Server's canUpdate for this model — false hides the row Edit action.</summary>
+        public bool CanUpdate
+        {
+            get => _canUpdate;
+            private set { _canUpdate = value; OnPropertyChanged(); }
+        }
+
         public bool IsLoading
         {
             get => _isLoading;
@@ -229,6 +246,15 @@ namespace BIManageRevit.BIManage.ViewModels.Protection
                     _logger?.LogInfo($"Fetching command protections from API for model {_currentModelGuid}...");
                     var apiCommands = await _syncService.FetchByModelGuidFromApiAsync(_currentModelGuid, _profileId ?? _revitUsername);
                     _logger?.LogInfo($"Fetched {apiCommands.Count} command protections from server (model-specific)");
+
+                    // No answer (offline / failed fetch) keeps the current state.
+                    var permissions = _syncService.LastPermissions;
+                    if (permissions != null)
+                    {
+                        CanCreate = permissions.CanCreate;
+                        CanUpdate = permissions.CanUpdate;
+                        _logger?.LogInfo($"Command protection permissions: canCreate={CanCreate}, canUpdate={CanUpdate}");
+                    }
                     LoadCommands();
                     return;
                 }

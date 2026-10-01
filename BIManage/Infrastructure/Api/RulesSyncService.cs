@@ -36,6 +36,12 @@ namespace BIManage.Infrastructure.Api
         private const string RuleProtectionEndpoint = "/api/v1/Revit/rule-protections";
         private const string HubMethod = "SendRuleData";
 
+        /// <summary>
+        /// canCreate/canUpdate from the last <see cref="FetchRuleProtectionsByModelAsync"/> response;
+        /// null when that fetch didn't get a parseable answer.
+        /// </summary>
+        public ProtectionPermissions? LastPermissions { get; private set; }
+
         public RulesSyncService(
             RuleRepository ruleRepository,
             ISignalRService? signalRService = null,
@@ -601,6 +607,7 @@ namespace BIManage.Infrastructure.Api
         /// </summary>
         public async Task<List<Rule>> FetchRuleProtectionsByModelAsync(string modelGuid)
         {
+            LastPermissions = null;
             try
             {
                 // Snapshot local rule count BEFORE the fetch so we can detect any drop
@@ -634,6 +641,7 @@ namespace BIManage.Infrastructure.Api
                 {
                     using var doc = JsonDocument.Parse(json);
                     var root = doc.RootElement;
+                    LastPermissions = ProtectionPermissions.FromResponse(root);
 
                     // Standard wrapper: { "success": true, "data": [...] }
                     if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array)

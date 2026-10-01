@@ -70,6 +70,7 @@ namespace BIManage.Infrastructure.SignalR.Core
             SignalRMethods.UserJoined, SignalRMethods.UserLeft, SignalRMethods.ActiveUsersUpdate,
             SignalRMethods.AdminBroadcast, SignalRMethods.ConfigurationUpdate, SignalRMethods.MaintenanceNotice,
             SignalRMethods.ForceLogout, SignalRMethods.ForceTokenRefresh,
+            SignalRMethods.CollaborationWarning,
             SignalRMethods.ChatMessageReceived
         };
 

@@ -873,6 +873,15 @@ namespace BIManage.Revit.Applications
                 connectionManager.RegisterListener(protectionChangeListener);
                 logger?.LogInfo("ProtectionChangeListener registered for real-time protection refresh");
 
+                // CollaborationWarning — company fell outside a project's collaboration chain while
+                // a model on that project is open. Application owns the documents, so it decides.
+                var collaborationWarningListener = new BIManage.Infrastructure.SignalR.Listeners.CollaborationWarningListener(
+                    (projectId, message) => global::BIManageRevit.BIManage.Revit.Applications.Application.Instance?
+                        .OnCollaborationWarningReceived(projectId, message),
+                    logger);
+                connectionManager.RegisterListener(collaborationWarningListener);
+                logger?.LogInfo("CollaborationWarningListener registered for real-time collaboration warnings");
+
                 // ForceLogout + ForceTokenRefresh — handle server-initiated auth events
                 var authTokenMgr = services.GetService<BIManage.Infrastructure.Auth.AuthTokenManager>();
                 var userService = services.GetService<BIManage.Core.Identity.IUserService>();

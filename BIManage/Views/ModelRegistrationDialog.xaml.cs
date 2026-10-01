@@ -40,7 +40,7 @@ namespace BIManageRevit.BIManage.Views
             dialog.TxtStatus.Text = "This model is already registered in ZeManage.\nAll tracking and protection features are active.";
 
             dialog.FeaturesSection.Visibility = WpfVisibility.Collapsed;
-            new System.Windows.Interop.WindowInteropHelper(dialog) { Owner = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle };
+            global::BIManage.Revit.Helpers.RevitWindowHelper.SetOwner(dialog);
             dialog.ShowDialog();
         }
 
@@ -93,7 +93,7 @@ namespace BIManageRevit.BIManage.Views
                 dialog.FeaturesList.Children.Add(item);
             }
 
-            new System.Windows.Interop.WindowInteropHelper(dialog) { Owner = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle };
+            global::BIManage.Revit.Helpers.RevitWindowHelper.SetOwner(dialog);
             dialog.ShowDialog();
         }
 
@@ -184,13 +184,72 @@ namespace BIManageRevit.BIManage.Views
         /// Shown when local registration succeeded but the server rejected the POST
         /// for a reason other than unprovisioned tenant.
         /// </summary>
-        public static void ShowServerRejected(int? statusCode, string? responseBody)
+        public static void ShowServerRejected(int? statusCode, string? responseBody, bool modelWillClose = false)
         {
+            // Open-time rejection closes the model once this popup is dismissed — say so.
+            var closeNote = modelWillClose ? "\n\nThis model will be closed." : "";
+
+            // Prefer the server's own "message" (e.g. "Company 'C5' is outside the current
+            // collaboration chain for project 'P1' and cannot register a model") over the
+            // generic text \u2014 it tells the user exactly why the registration was refused.
+            var serverMessage = ExtractServerMessage(responseBody);
+            if (!string.IsNullOrEmpty(serverMessage))
+            {
+                ShowError(
+                    "Registration Rejected",
+                    "Server rejected model registration",
+                    Truncate(serverMessage, 600) + closeNote);
+                return;
+            }
+
             ShowWarning(
                 "\u26A0",
                 "Server Rejected Registration",
                 "Registered locally only",
-                $"Your model was saved locally, but the BIManage server rejected the registration request ({statusCode} response).\n\nThe local record is kept, and registration will be retried automatically on the next model open.\n\nServer response:\n{Truncate(responseBody, 400)}");
+                $"Your model was saved locally, but the BIManage server rejected the registration request ({statusCode} response).\n\nThe local record is kept, and registration will be retried automatically on the next model open.\n\nServer response:\n{Truncate(responseBody, 400)}{closeNote}");
+        }
+
+        /// <summary>
+        /// Shown when the company is outside the project's collaboration chain — from the
+        /// warnings check after a successful registration, or a live CollaborationWarning push.
+        /// </summary>
+        public static void ShowCollaborationWarning(string? message, bool modelWillClose = false)
+        {
+            ShowWarning(
+                "⚠",
+                "Collaboration Warning",
+                "Your company is outside this project's collaboration",
+                Truncate(message, 600) + (modelWillClose ? "\n\nThis model will be closed." : ""));
+        }
+
+        /// <summary>
+        /// Pulls the human-readable error text out of a server error body.
+        /// Supports { "message": "..." } plus the ASP.NET ProblemDetails fields.
+        /// Returns null when the body is not JSON or carries no such field.
+        /// </summary>
+        private static string? ExtractServerMessage(string? responseBody)
+        {
+            if (string.IsNullOrWhiteSpace(responseBody)) return null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(responseBody!);
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+
+                foreach (var field in new[] { "message", "detail", "error", "title" })
+                {
+                    foreach (var prop in root.EnumerateObject())
+                    {
+                        if (!string.Equals(prop.Name, field, System.StringComparison.OrdinalIgnoreCase)) continue;
+                        if (prop.Value.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+
+                        var text = prop.Value.GetString();
+                        if (!string.IsNullOrWhiteSpace(text)) return text!.Trim();
+                    }
+                }
+            }
+            catch { /* not JSON \u2014 caller falls back to the raw body */ }
+            return null;
         }
 
         /// <summary>
@@ -228,6 +287,7 @@ namespace BIManageRevit.BIManage.Views
             dialog.HeaderIcon.Text = icon;
             dialog.TxtTitle.Text = title;
             dialog.TxtSubtitle.Text = subtitle;
+            dialog.MaxWidth = 480;
 
             // Hide model details card
             dialog.ModelDetailsCard.Visibility = WpfVisibility.Collapsed;
@@ -238,16 +298,25 @@ namespace BIManageRevit.BIManage.Views
             dialog.TxtStatus.Foreground = new SolidColorBrush(WpfColor.FromRgb(146, 64, 14)); // #92400E
             dialog.TxtStatus.Text = message;
 
-            new System.Windows.Interop.WindowInteropHelper(dialog) { Owner = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle };
+            global::BIManage.Revit.Helpers.RevitWindowHelper.SetOwner(dialog);
             dialog.ShowDialog();
         }
 
         private static void ShowError(string title, string message)
         {
+            ShowError(title, "Something went wrong", message);
+        }
+
+        private static void ShowError(string title, string subtitle, string message)
+        {
             var dialog = new ModelRegistrationDialog();
             dialog.HeaderIcon.Text = "\u274C";
             dialog.TxtTitle.Text = title;
-            dialog.TxtSubtitle.Text = "Something went wrong";
+            dialog.TxtSubtitle.Text = subtitle;
+
+            // Server messages arrive as one long line \u2014 cap the width so they wrap
+            // instead of stretching the dialog across the screen.
+            dialog.MaxWidth = 480;
 
             // Hide model details card
             dialog.ModelDetailsCard.Visibility = WpfVisibility.Collapsed;
@@ -258,7 +327,7 @@ namespace BIManageRevit.BIManage.Views
             dialog.TxtStatus.Foreground = new SolidColorBrush(WpfColor.FromRgb(185, 28, 28)); // #B91C1C
             dialog.TxtStatus.Text = message;
 
-            new System.Windows.Interop.WindowInteropHelper(dialog) { Owner = System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle };
+            global::BIManage.Revit.Helpers.RevitWindowHelper.SetOwner(dialog);
             dialog.ShowDialog();
         }
 
