@@ -13,6 +13,14 @@ public sealed class AgentDbContext : DbContext
 
     public AgentDbContext(DbContextOptions<AgentDbContext> options) : base(options) { }
 
+    // Every agent timestamp is UTC — store it in one text format and restore it as Kind=Utc,
+    // so it serializes as "…Z" to the API. See UtcTimestamp.
+    protected override void ConfigureConventions(ModelConfigurationBuilder b)
+    {
+        b.Properties<DateTime>().HaveConversion<UtcDateTimeConverter>();
+        b.Properties<DateTime?>().HaveConversion<UtcDateTimeConverter>();
+    }
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         b.Entity<ApplicationUsage>()

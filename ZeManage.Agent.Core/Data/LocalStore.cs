@@ -281,6 +281,28 @@ public sealed class LocalStore
         // Backfill local_id for any existing rows that don't have it yet
         await db.Database.ExecuteSqlRawAsync(
             """UPDATE "machine_info" SET "local_id" = rowid WHERE "local_id" IS NULL;""", ct);
+
+        // V16: one timestamp text format. Raw-SQL updates used to write ToString("o")
+        // ("2026-10-07T04:00:48.1459368Z") next to EF's "2026-10-07 04:00:48.1459368"; rewrite
+        // the old form into the EF form. Same UTC digits — only the 'T' and trailing 'Z' go, no
+        // timezone shift. Idempotent: rows already in the EF form don't match the LIKE.
+        foreach (var (table, columns) in new[]
+        {
+            ("ApplicationUsages", new[] { "StartTime", "EndTime", "CreatedAt", "UpdatedAt" }),
+            ("ActivityTimeline",  new[] { "StartTime", "EndTime", "CreatedAt", "UpdatedAt" }),
+            ("BrowserActivities", new[] { "StartTime", "EndTime", "CreatedAt", "UpdatedAt" }),
+            ("NetworkSnapshots",  new[] { "CapturedAt", "CreatedAt", "UpdatedAt" }),
+            ("Screenshots",       new[] { "CapturedAt", "CreatedAt", "UpdatedAt" }),
+        })
+        foreach (var col in columns)
+        {
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(
+                    $"""UPDATE "{table}" SET "{col}" = replace(substr("{col}", 1, length("{col}") - 1), 'T', ' ') WHERE "{col}" LIKE '____-__-__T%Z'""", ct);
+            }
+            catch { /* column missing on a very old schema — nothing to normalize */ }
+        }
     }
 
     public async Task<long> SaveIdentityAsync(AgentIdentity identity, CancellationToken ct = default)
@@ -420,12 +442,12 @@ public sealed class LocalStore
             cmd.Parameters.Add(p);
         }
         P("@id",            u.LocalId);
-        P("@endTime",       u.EndTime?.ToString("o"));
+        P("@endTime",       u.EndTime is { } end ? UtcTimestamp.ToStorage(end) : null);
         P("@activeSeconds", u.ActiveSeconds);
         P("@focusSeconds",  u.FocusSeconds);
         P("@idleSeconds",   u.IdleSeconds);
         P("@status",        u.Status);
-        P("@updatedAt",     u.UpdatedAt.ToString("o"));
+        P("@updatedAt",     UtcTimestamp.ToStorage(u.UpdatedAt));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -540,7 +562,7 @@ public sealed class LocalStore
         P("@active",    activeSeconds);
         P("@focus",     focusSeconds);
         P("@idle",      idleSeconds);
-        P("@updatedAt", updatedAt.ToString("o"));
+        P("@updatedAt", UtcTimestamp.ToStorage(updatedAt));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -696,11 +718,11 @@ public sealed class LocalStore
             cmd.Parameters.Add(p);
         }
         P("@id",            localId);
-        P("@endTime",       endTime.ToString("o"));
+        P("@endTime",       UtcTimestamp.ToStorage(endTime));
         P("@activeSeconds", activeSeconds);
         P("@focusSeconds",  focusSeconds);
         P("@idleSeconds",   idleSeconds);
-        P("@updatedAt",     updatedAt.ToString("o"));
+        P("@updatedAt",     UtcTimestamp.ToStorage(updatedAt));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -731,7 +753,7 @@ public sealed class LocalStore
         P("@active",    activeSeconds);
         P("@focus",     focusSeconds);
         P("@idle",      idleSeconds);
-        P("@updatedAt", updatedAt.ToString("o"));
+        P("@updatedAt", UtcTimestamp.ToStorage(updatedAt));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

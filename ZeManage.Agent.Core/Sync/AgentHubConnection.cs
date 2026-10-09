@@ -473,12 +473,23 @@ public sealed class AgentHubConnection : BackgroundService
                 }
 
                 _hub = null;
-                // Hub is already Disconnected — StopAsync returns immediately
-                using (var stopCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5)))
-                    await hub.StopAsync(stopCts.Token).ConfigureAwait(false);
-                await hub.DisposeAsync();
+                // Hub is already Disconnected — StopAsync normally returns immediately. Best-effort:
+                // a cleanup timeout/throw here must never escape and end the reconnect loop.
+                try
+                {
+                    using (var stopCts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                        await hub.StopAsync(stopCts.Token).ConfigureAwait(false);
+                    await hub.DisposeAsync();
+                }
+                catch (Exception ex) { _log.LogDebug(ex, "[Hub] Cleanup of disconnected hub threw (ignored)"); }
+                _log.LogWarning("[Hub] Disconnected — rebuilding connection");
             }
-            catch (OperationCanceledException) { break; }
+            // Only a real shutdown ends the loop. StartAsync handshake/HTTP timeouts and the 5 s
+            // StopAsync cleanup token also throw OperationCanceledException (TaskCanceledException);
+            // a bare `catch (OperationCanceledException) { break; }` treated those as shutdown and
+            // left the agent permanently "Stopped" — no hub, so server pushes like
+            // CaptureScreenshotNow never arrived. Those now fall through to the retry below.
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
                 _state.IsHubConnected    = false;

@@ -64,6 +64,14 @@ public sealed class ProcessMonitor : BackgroundService
     // or modifying the other's fields.
     private OpenInterval? _openInterval;
 
+    // Engagement (idle < idle threshold) as of the previous activity tick — null before the first
+    // tick. The tick where this flips true → false is when the idle threshold was just crossed.
+    private bool? _lastEngaged;
+
+    // End of the most recently closed timeline segment — lower bound for back-dating an Idle
+    // segment when no segment was open (unrecognised foreground app), so segments never overlap.
+    private DateTime? _lastIntervalEndUtc;
+
     private sealed class Tracking
     {
         public required string  ProcessName;
@@ -347,8 +355,19 @@ public sealed class ProcessMonitor : BackgroundService
                 var idle           = Win32Idle.GetIdleDuration();
                 var foreground     = Win32Window.GetForegroundProcessName();
                 var now            = DateTime.UtcNow;
+                var prevTick       = lastTick;
                 var elapsed        = (long)(now - lastTick).TotalSeconds;
                 lastTick           = now;
+
+                // Idle threshold just crossed: the user has really been idle since their last
+                // input, not just since the threshold. The time from that last input up to the
+                // previous tick was counted as Active/Focus while they could still have come
+                // back — reclassify it as Idle so a 7-minute absence reports 7 minutes of idle,
+                // not 7 minus the threshold. Returning before the threshold changes nothing.
+                bool engagedNow     = idle < idleThreshold;
+                bool crossedIdle    = _lastEngaged == true && !engagedNow;
+                var  lastInputUtc   = now - idle;
+                _lastEngaged        = engagedNow;
 
                 // Three mutually-exclusive buckets, matching Active/Focused/Idle exactly:
                 //   Active — idle < activeThreshold        (currently interacting)
@@ -366,6 +385,12 @@ public sealed class ProcessMonitor : BackgroundService
                                 tracked.FocusSeconds += elapsed;
                             else
                                 tracked.IdleSeconds += elapsed;
+
+                            if (crossedIdle)
+                            {
+                                var retro = (long)Math.Max(0, (prevTick - lastInputUtc).TotalSeconds);
+                                MoveToIdle(ref tracked.FocusSeconds, ref tracked.ActiveSeconds, ref tracked.IdleSeconds, retro);
+                            }
                         }
                     }
                 }
@@ -383,10 +408,11 @@ public sealed class ProcessMonitor : BackgroundService
                 // Active, 09:15-09:20 Idle, Chrome-again 09:20-09:45 Active are three rows, not one.
                 OpenInterval? intervalToClose = null;
                 OpenInterval? intervalJustOpened = null;
+                var closeAt = now;
 
                 if (elapsed > 0)
                 {
-                    bool engaged = idle < idleThreshold; // combines the Active + Focus buckets
+                    bool engaged = engagedNow; // combines the Active + Focus buckets
                     // Idle time inside a configured Fixed-window break (Break Time Setup) is
                     // reported as "Break" instead of "Idle" so it isn't counted against the
                     // employee — computed once per tick and reused below so the segment-open
@@ -440,6 +466,26 @@ public sealed class ProcessMonitor : BackgroundService
                             }
                             else
                             {
+                                // Back-date the Idle/Break segment to the last input when the
+                                // threshold was just crossed, never before the segment it replaces
+                                // (or the last closed one), and move the seconds it takes over out
+                                // of that segment's Active/Focus counters.
+                                var idleStart = now;
+                                long retro = 0;
+                                if (crossedIdle)
+                                {
+                                    var floor = intervalToClose?.StartedUtc ?? _lastIntervalEndUtc ?? lastInputUtc;
+                                    idleStart = lastInputUtc > floor ? lastInputUtc : floor;
+                                    if (idleStart > now) idleStart = now;
+                                    retro = (long)Math.Max(0, (prevTick - idleStart).TotalSeconds);
+                                    if (intervalToClose is not null)
+                                    {
+                                        long dummyIdle = 0;
+                                        retro = MoveToIdle(ref intervalToClose.FocusSeconds, ref intervalToClose.ActiveSeconds, ref dummyIdle, retro);
+                                        closeAt = idleStart;
+                                    }
+                                }
+
                                 _openInterval = new OpenInterval
                                 {
                                     LocalId     = Guid.NewGuid().ToString(),
@@ -447,9 +493,13 @@ public sealed class ProcessMonitor : BackgroundService
                                     ProcessName = null,
                                     DisplayName = null,
                                     ApplicationId = null,
-                                    StartedUtc  = now
+                                    StartedUtc  = idleStart,
+                                    IdleSeconds = retro
                                 };
                             }
+
+                            if (intervalToClose is not null)
+                                _lastIntervalEndUtc = closeAt;
 
                             if (_openInterval is not null)
                                 intervalJustOpened = _openInterval;
@@ -467,7 +517,7 @@ public sealed class ProcessMonitor : BackgroundService
                 // DB writes happen OUTSIDE _lock, fire-and-forget — a slow/locked SQLite write can
                 // never delay this tick's ReportLiveActivity send further below.
                 if (intervalToClose is not null)
-                    _ = CloseOpenIntervalAsync(intervalToClose, now);
+                    _ = CloseOpenIntervalAsync(intervalToClose, closeAt);
                 if (intervalJustOpened is not null)
                     _ = _store.AddActivityIntervalAsync(new ActivityInterval
                     {
@@ -1159,6 +1209,19 @@ public sealed class ProcessMonitor : BackgroundService
         {
             _log.LogWarning(ex, "RegisterBrowserIconsAsync failed");
         }
+    }
+
+    // Moves up to `seconds` out of Focus first, then Active, into Idle; returns how many moved.
+    // Focus is drained first because the time right before the idle threshold is crossed is the
+    // Focus bucket (no input for activeThreshold..idleThreshold).
+    private static long MoveToIdle(ref long focus, ref long active, ref long idle, long seconds)
+    {
+        var fromFocus  = Math.Min(focus, seconds);
+        var fromActive = Math.Min(active, seconds - fromFocus);
+        focus  -= fromFocus;
+        active -= fromActive;
+        idle   += fromFocus + fromActive;
+        return fromFocus + fromActive;
     }
 
     // Closes an open activity interval — foreground lost, day rollover, or graceful shutdown.
