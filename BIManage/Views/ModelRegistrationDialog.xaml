@@ -166,8 +166,8 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Button Grid.Column="1" Content="Close" Click="Close_Click"
-                            Style="{StaticResource PrimaryButton}" Width="80"/>
+                    <Button x:Name="CloseActionButton" Grid.Column="1" Content="Close" Click="Close_Click"
+                            Style="{StaticResource PrimaryButton}" MinWidth="80"/>
                 </Grid>
             </Grid>
         </Grid>

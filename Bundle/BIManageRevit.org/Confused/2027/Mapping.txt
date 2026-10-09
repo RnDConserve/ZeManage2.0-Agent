@@ -842,15 +842,15 @@ Skipped Types:
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowNoIdentifier[0]( ) skipped:  KeepPublicApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowRegistrationFailed[0]( ) skipped:  KeepPublicApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowTenantNotProvisioned[0]( ) skipped:  KeepPublicApi option in configuration
-	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowServerRejected[3]( [System.Runtime]System.Nullable`1<[System.Runtime]System.Int32>, [System.Runtime]System.String, [System.Runtime]System.Boolean ) skipped:  KeepPublicApi option in configuration
-	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowCollaborationWarning[2]( [System.Runtime]System.String, [System.Runtime]System.Boolean ) skipped:  KeepPublicApi option in configuration
+	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowServerRejected[4]( [System.Runtime]System.Nullable`1<[System.Runtime]System.Int32>, [System.Runtime]System.String, [System.Runtime]System.Boolean, [System.Runtime]System.Boolean ) skipped:  KeepPublicApi option in configuration
+	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowCollaborationWarning[3]( [System.Runtime]System.String, [System.Runtime]System.Boolean, [System.Runtime]System.Boolean ) skipped:  KeepPublicApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ExtractServerMessage[1]( [System.Runtime]System.String ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowRegisteredPendingServer[1]( [System.Runtime]System.String ) skipped:  KeepPublicApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::Truncate[2]( [System.Runtime]System.String, [System.Runtime]System.Int32 ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowRegistrationError[1]( [System.Runtime]System.String ) skipped:  KeepPublicApi option in configuration
-	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowWarning[4]( [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String ) skipped:  HidePrivateApi option in configuration
+	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowWarning[5]( [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowError[2]( [System.Runtime]System.String, [System.Runtime]System.String ) skipped:  HidePrivateApi option in configuration
-	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowError[3]( [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String ) skipped:  HidePrivateApi option in configuration
+	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::ShowError[4]( [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String, [System.Runtime]System.String ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::Close_Click[2]( [System.Runtime]System.Object, [PresentationCore]System.Windows.RoutedEventArgs ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::Window_KeyDown[2]( [System.Runtime]System.Object, [PresentationCore]System.Windows.Input.KeyEventArgs ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Views.ModelRegistrationDialog::TitleBar_MouseLeftButtonDown[2]( [System.Runtime]System.Object, [PresentationCore]System.Windows.Input.MouseButtonEventArgs ) skipped:  HidePrivateApi option in configuration
@@ -3471,7 +3471,7 @@ Skipped Types:
 
 	[BIManageRevit]BIManageRevit.BIManage.Revit.Applications.Application::.cctor[0]( ) skipped:  special name
 	[BIManageRevit]BIManageRevit.BIManage.Revit.Applications.Application::RefreshCADExplodeSwapState[0]( ) skipped:  KeepPublicApi option in configuration
-	[BIManageRevit]BIManageRevit.BIManage.Revit.Applications.Application::TryCloseDocumentDeferred[2]( [RevitAPI]Autodesk.Revit.DB.Document, [System.Runtime]System.String ) skipped:  KeepPublicApi option in configuration
+	[BIManageRevit]BIManageRevit.BIManage.Revit.Applications.Application::TryCloseDocumentDeferred[3]( [RevitAPI]Autodesk.Revit.DB.Document, [System.Runtime]System.String, [System.Runtime]System.Boolean ) skipped:  KeepPublicApi option in configuration
 	[BIManageRevit]BIManageRevit.BIManage.Revit.Applications.Application::get_Instance[0]( ) skipped:  skipping properties
 	[BIManageRevit]BIManageRevit.BIManage.Revit.Applications.Application::get_Services[0]( ) skipped:  skipping properties
 	[BIManageRevit]BIManageRevit.BIManage.Revit.Applications.Application::get_Logger[0]( ) skipped:  skipping properties
@@ -5344,7 +5344,8 @@ Skipped Types:
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::GetName[0]( ) skipped:  external base class or interface
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::.ctor[1]( [BIManageRevit]BIManage.Infrastructure.Logging.ILogger ) skipped:  special name
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::SetExternalEvent[1]( [RevitAPIUI]Autodesk.Revit.UI.ExternalEvent ) skipped:  KeepPublicApi option in configuration
-	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::RequestClose[2]( [RevitAPI]Autodesk.Revit.DB.Document, [System.Runtime]System.String ) skipped:  KeepPublicApi option in configuration
+	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::RequestClose[3]( [RevitAPI]Autodesk.Revit.DB.Document, [System.Runtime]System.String, [System.Runtime]System.Boolean ) skipped:  KeepPublicApi option in configuration
+	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::TrySyncWithCentral[3]( [RevitAPIUI]Autodesk.Revit.UI.UIApplication, [RevitAPI]Autodesk.Revit.DB.Document, [BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::FindLiveDocument[2]( [RevitAPIUI]Autodesk.Revit.UI.UIApplication, [BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest ) skipped:  HidePrivateApi option in configuration
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler::TrySwitchAwayFromActive[2]( [RevitAPIUI]Autodesk.Revit.UI.UIApplication, [RevitAPI]Autodesk.Revit.DB.Document ) skipped:  HidePrivateApi option in configuration
 }
@@ -19737,6 +19738,8 @@ Skipped Types:
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest::set_Title[1]( [System.Runtime]System.String ) skipped:  skipping properties
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest::get_Reason[0]( ) skipped:  skipping properties
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest::set_Reason[1]( [System.Runtime]System.String ) skipped:  skipping properties
+	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest::get_SyncBeforeClose[0]( ) skipped:  skipping properties
+	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest::set_SyncBeforeClose[1]( [System.Runtime]System.Boolean ) skipped:  skipping properties
 	[BIManageRevit]BIManage.Revit.Protection.CloseDocumentExternalEventHandler/CloseRequest::.ctor[0]( ) skipped:  special name
 }
 

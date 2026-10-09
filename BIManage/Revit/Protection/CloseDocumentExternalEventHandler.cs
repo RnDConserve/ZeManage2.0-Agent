@@ -48,7 +48,10 @@ namespace BIManage.Revit.Protection
         /// close runs on the next Revit idle tick. <paramref name="reason"/> is logged
         /// for diagnostics and shown nowhere user-visible.
         /// </summary>
-        public void RequestClose(Document doc, string reason)
+        /// <param name="syncBeforeClose">Synchronize a workshared model with central before closing
+        /// it (relinquishing everything). If the sync fails the model is left open rather than
+        /// closed with unsynced work.</param>
+        public void RequestClose(Document doc, string reason, bool syncBeforeClose = false)
         {
             if (doc == null) return;
             if (_externalEvent == null)
@@ -63,9 +66,10 @@ namespace BIManage.Revit.Protection
             {
                 PathName = doc.PathName ?? "",
                 Title = doc.Title ?? "",
-                Reason = reason ?? ""
+                Reason = reason ?? "",
+                SyncBeforeClose = syncBeforeClose
             });
-            _logger?.LogInfo($"[CloseDocument] Queued close for '{doc.Title}' ({reason})");
+            _logger?.LogInfo($"[CloseDocument] Queued close for '{doc.Title}' ({reason}{(syncBeforeClose ? ", sync first" : "")})");
 
             // Raise from a background thread. Revit forbids ExternalEvent.Raise() on
             // the main thread while inside (or in the async continuation of) a Revit
@@ -96,6 +100,9 @@ namespace BIManage.Revit.Protection
                         _logger?.LogInfo($"[CloseDocument] Document '{req.Title}' already gone — nothing to close");
                         continue;
                     }
+
+                    if (req.SyncBeforeClose && !TrySyncWithCentral(app, live, req))
+                        continue; // sync failed — keep the model open instead of losing unsynced work
 
                     // Try switching to another doc first — avoids the active-doc restriction.
                     // If no other doc exists this is a no-op and we fall through to PostCommand.
@@ -156,6 +163,65 @@ namespace BIManage.Revit.Protection
 
         public string GetName() => "CloseDocumentExternalEvent";
 
+        /// <summary>
+        /// Synchronizes a workshared model with central before it is closed — same options as the
+        /// auto-exit sync (relinquish everything so Revit's close doesn't stop on the "Editable
+        /// Elements" prompt; internal-sync gate so Command Protection doesn't prompt on it).
+        /// Non-workshared / detached / read-only documents have no central to sync to and pass
+        /// straight through. Returns false if the sync failed; the user is told the model was
+        /// left open.
+        /// </summary>
+        private bool TrySyncWithCentral(UIApplication app, Document doc, CloseRequest req)
+        {
+            if (!BIManage.Revit.Helpers.DocumentTypeHelper.IsWorkshared(doc) || doc.IsDetached || doc.IsReadOnly)
+                return true;
+
+            var failuresHandler = new BIManage.Revit.BackgroundSync.BackgroundFailuresHandler(_logger);
+            try
+            {
+                _logger?.LogInfo($"[CloseDocument] Syncing '{req.Title}' with central before close ({req.Reason})");
+                var syncOpts = new SynchronizeWithCentralOptions { Comment = "ZeManage sync before close" };
+                syncOpts.SetRelinquishOptions(new RelinquishOptions(true)
+                {
+                    FamilyWorksets = false,
+                    CheckedOutElements = true
+                });
+
+                failuresHandler.Attach(app.Application);
+                try
+                {
+                    using (BIManage.Revit.SyncTrafficControl.SyncProtectionGate.EnterInternalSync())
+                    {
+                        doc.SynchronizeWithCentral(new TransactWithCentralOptions(), syncOpts);
+                    }
+                }
+                finally
+                {
+                    failuresHandler.Detach(app.Application);
+                }
+
+                // Local copy can still be flagged modified after the sync — save it so the close
+                // doesn't drop it.
+                if (doc.IsModified)
+                    doc.Save();
+
+                _logger?.LogInfo($"[CloseDocument] Sync completed for '{req.Title}'");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError($"[CloseDocument] Sync before close failed for '{req.Title}' — model left open: {ex.Message}", ex);
+                try
+                {
+                    TaskDialog.Show("ZeManage",
+                        $"Could not synchronize '{req.Title}' with central:\n{ex.Message}\n\n" +
+                        "The model was left open so your changes are not lost. Please synchronize and close it manually.");
+                }
+                catch { /* best effort */ }
+                return false;
+            }
+        }
+
         private static Document? FindLiveDocument(UIApplication app, CloseRequest req)
         {
             foreach (Document d in app.Application.Documents)
@@ -205,6 +271,7 @@ namespace BIManage.Revit.Protection
             public string PathName { get; set; } = "";
             public string Title { get; set; } = "";
             public string Reason { get; set; } = "";
+            public bool SyncBeforeClose { get; set; }
         }
     }
 }

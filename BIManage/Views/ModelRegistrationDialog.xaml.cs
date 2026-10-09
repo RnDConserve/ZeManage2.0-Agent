@@ -184,10 +184,14 @@ namespace BIManageRevit.BIManage.Views
         /// Shown when local registration succeeded but the server rejected the POST
         /// for a reason other than unprovisioned tenant.
         /// </summary>
-        public static void ShowServerRejected(int? statusCode, string? responseBody, bool modelWillClose = false)
+        public static void ShowServerRejected(int? statusCode, string? responseBody, bool modelWillClose = false, bool syncBeforeClose = false)
         {
-            // Open-time rejection closes the model once this popup is dismissed — say so.
-            var closeNote = modelWillClose ? "\n\nThis model will be closed." : "";
+            // Open-time rejection closes the model once this popup is dismissed — say so. A
+            // workshared model is synchronized with central first, and the button says so.
+            var closeNote = !modelWillClose ? ""
+                : syncBeforeClose ? "\n\nThis model will be synchronized with central and then closed."
+                : "\n\nThis model will be closed.";
+            var closeButtonText = modelWillClose && syncBeforeClose ? "Sync & Close" : null;
 
             // Prefer the server's own "message" (e.g. "Company 'C5' is outside the current
             // collaboration chain for project 'P1' and cannot register a model") over the
@@ -198,7 +202,8 @@ namespace BIManageRevit.BIManage.Views
                 ShowError(
                     "Registration Rejected",
                     "Server rejected model registration",
-                    Truncate(serverMessage, 600) + closeNote);
+                    Truncate(serverMessage, 600) + closeNote,
+                    closeButtonText);
                 return;
             }
 
@@ -206,20 +211,27 @@ namespace BIManageRevit.BIManage.Views
                 "\u26A0",
                 "Server Rejected Registration",
                 "Registered locally only",
-                $"Your model was saved locally, but the BIManage server rejected the registration request ({statusCode} response).\n\nThe local record is kept, and registration will be retried automatically on the next model open.\n\nServer response:\n{Truncate(responseBody, 400)}{closeNote}");
+                $"Your model was saved locally, but the BIManage server rejected the registration request ({statusCode} response).\n\nThe local record is kept, and registration will be retried automatically on the next model open.\n\nServer response:\n{Truncate(responseBody, 400)}{closeNote}",
+                closeButtonText);
         }
 
         /// <summary>
         /// Shown when the company is outside the project's collaboration chain — from the
         /// warnings check after a successful registration, or a live CollaborationWarning push.
         /// </summary>
-        public static void ShowCollaborationWarning(string? message, bool modelWillClose = false)
+        public static void ShowCollaborationWarning(string? message, bool modelWillClose = false, bool syncBeforeClose = false)
         {
+            // A workshared model is synchronized with central before it closes — the button says
+            // so, since clicking it (or dismissing the popup any other way) starts that sync.
+            var closeNote = !modelWillClose ? ""
+                : syncBeforeClose ? "\n\nThis model will be synchronized with central and then closed."
+                : "\n\nThis model will be closed.";
             ShowWarning(
                 "⚠",
                 "Collaboration Warning",
                 "Your company is outside this project's collaboration",
-                Truncate(message, 600) + (modelWillClose ? "\n\nThis model will be closed." : ""));
+                Truncate(message, 600) + closeNote,
+                closeButtonText: modelWillClose && syncBeforeClose ? "Sync & Close" : null);
         }
 
         /// <summary>
@@ -281,9 +293,11 @@ namespace BIManageRevit.BIManage.Views
                 $"An error occurred while registering the model:\n\n{errorMessage}\n\nCheck the log file for details.");
         }
 
-        internal static void ShowWarning(string icon, string title, string subtitle, string message)
+        internal static void ShowWarning(string icon, string title, string subtitle, string message, string? closeButtonText = null)
         {
             var dialog = new ModelRegistrationDialog();
+            if (!string.IsNullOrEmpty(closeButtonText))
+                dialog.CloseActionButton.Content = closeButtonText;
             dialog.HeaderIcon.Text = icon;
             dialog.TxtTitle.Text = title;
             dialog.TxtSubtitle.Text = subtitle;
@@ -307,9 +321,11 @@ namespace BIManageRevit.BIManage.Views
             ShowError(title, "Something went wrong", message);
         }
 
-        private static void ShowError(string title, string subtitle, string message)
+        private static void ShowError(string title, string subtitle, string message, string? closeButtonText = null)
         {
             var dialog = new ModelRegistrationDialog();
+            if (!string.IsNullOrEmpty(closeButtonText))
+                dialog.CloseActionButton.Content = closeButtonText;
             dialog.HeaderIcon.Text = "\u274C";
             dialog.TxtTitle.Text = title;
             dialog.TxtSubtitle.Text = subtitle;

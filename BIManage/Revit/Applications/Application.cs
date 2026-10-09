@@ -164,7 +164,7 @@ namespace BIManageRevit.BIManage.Revit.Applications
         /// request was queued, false if the close infrastructure isn't ready yet
         /// (caller can fall back to inline doc.Close which may or may not work).
         /// </summary>
-        public bool TryCloseDocumentDeferred(Autodesk.Revit.DB.Document doc, string reason)
+        public bool TryCloseDocumentDeferred(Autodesk.Revit.DB.Document doc, string reason, bool syncBeforeClose = false)
         {
             if (doc == null) return false;
             if (_closeDocumentHandler == null || _closeDocumentEvent == null)
@@ -172,7 +172,7 @@ namespace BIManageRevit.BIManage.Revit.Applications
                 Logger?.LogWarning("[CloseDocument] Deferred close requested but infrastructure not ready");
                 return false;
             }
-            _closeDocumentHandler.RequestClose(doc, reason);
+            _closeDocumentHandler.RequestClose(doc, reason, syncBeforeClose);
             return true;
         }
 
@@ -2830,9 +2830,16 @@ namespace BIManageRevit.BIManage.Revit.Applications
             var responseBody = result.ResponseBody;
             uiDispatcher.BeginInvoke(new Action(() =>
             {
+                // Workshared models are synchronized with central before closing so the user's
+                // work isn't lost — the popup's button reads "Sync & Close" for them.
+                bool syncBeforeClose;
+                try { syncBeforeClose = doc != null && doc.IsValidObject && DocumentTypeHelper.IsWorkshared(doc) && !doc.IsDetached && !doc.IsReadOnly; }
+                catch { syncBeforeClose = false; }
+
                 try
                 {
-                    global::BIManageRevit.BIManage.Views.ModelRegistrationDialog.ShowServerRejected(statusCode, responseBody, modelWillClose: true);
+                    global::BIManageRevit.BIManage.Views.ModelRegistrationDialog.ShowServerRejected(
+                        statusCode, responseBody, modelWillClose: true, syncBeforeClose: syncBeforeClose);
                 }
                 catch (Exception dialogEx)
                 {
@@ -2843,7 +2850,7 @@ namespace BIManageRevit.BIManage.Revit.Applications
                 try
                 {
                     if (doc != null && doc.IsValidObject)
-                        TryCloseDocumentDeferred(doc, "Server rejected model registration");
+                        TryCloseDocumentDeferred(doc, "Server rejected model registration", syncBeforeClose);
                 }
                 catch (Exception closeEx)
                 {
@@ -2953,9 +2960,16 @@ namespace BIManageRevit.BIManage.Revit.Applications
                 }
                 entry.CloseRequested = true;
 
+                // Workshared models are synchronized with central before closing so the user's
+                // work isn't lost — the popup's button reads "Sync & Close" for them.
+                bool syncBeforeClose;
+                try { syncBeforeClose = DocumentTypeHelper.IsWorkshared(doc!) && !doc!.IsDetached && !doc.IsReadOnly; }
+                catch { syncBeforeClose = false; }
+
                 try
                 {
-                    global::BIManageRevit.BIManage.Views.ModelRegistrationDialog.ShowCollaborationWarning(message, modelWillClose: true);
+                    global::BIManageRevit.BIManage.Views.ModelRegistrationDialog.ShowCollaborationWarning(
+                        message, modelWillClose: true, syncBeforeClose: syncBeforeClose);
                 }
                 catch (Exception dialogEx)
                 {
@@ -2965,7 +2979,7 @@ namespace BIManageRevit.BIManage.Revit.Applications
                 try
                 {
                     if (doc!.IsValidObject)
-                        TryCloseDocumentDeferred(doc, "Company is outside the project's collaboration chain");
+                        TryCloseDocumentDeferred(doc, "Company is outside the project's collaboration chain", syncBeforeClose);
                 }
                 catch (Exception closeEx)
                 {
